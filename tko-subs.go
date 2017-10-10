@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,7 +190,7 @@ func scanforeachDomain(domain string, cmsRecords []*CMS, wg *sync.WaitGroup) {
 	//Doing CNAME lookups using GOLANG's net package or for that matter just doing a host on a domain
 	//does not necessarily let us know about any dead DNS records. So, we need to use dig CNAME <domain> +short
 	//to properly figure out if there are any dead DNS records
-
+	var arecord string
 	cmd := exec.Command("dig", "CNAME", domain, "+short")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -198,6 +199,14 @@ func scanforeachDomain(domain string, cmsRecords []*CMS, wg *sync.WaitGroup) {
 
 	//Grabbing the output from the DIG command and storing it in the cname variable
 	cname := out.String()
+
+	if cname == "" {
+		cmd := exec.Command("dig", "A", domain, "+short")
+		cmd.Stdout = &out
+		err := cmd.Run()
+		Checkiferr(err)
+		arecord = strings.TrimSpace(out.String())
+	}
 
 	var tkr tkosubsResult
 	var isVulnerable bool
@@ -281,6 +290,24 @@ func scanforeachDomain(domain string, cmsRecords []*CMS, wg *sync.WaitGroup) {
 
 			tkoRes = append(tkoRes, tkr)
 		}
+
+		if arecord != "" {
+			response, err := client.Get("http://" + arecord)
+			if err == nil {
+				text, err := ioutil.ReadAll(response.Body)
+				Checkiferr(err)
+				isVulnerable, err = regexp.MatchString(cmsRecord.String, string(text))
+				if isVulnerable {
+					fmt.Printf("Domain: %s, IP: %s, Provider: %s\n", domain, arecord, cmsRecord.Name)
+					tkr.Domain = domain
+					tkr.IsTakenOver = false
+					tkr.IsVulnerable = true
+					tkr.Provider = cmsRecord.Name
+					tkr.RespString = cmsRecord.String
+					tkoRes = append(tkoRes, tkr)
+				}
+			}
+		}
 	}
 	wg.Done()
 }
@@ -291,7 +318,7 @@ func scansingleDomain(domain string, cmsRecords []*CMS) (bool, bool, error) {
 	//Doing CNAME lookups using GOLANG's net package or for that matter just doing a host on a domain
 	//does not necessarily let us know about any dead DNS records. So, we need to use dig CNAME <domain> +short
 	//to properly figure out if there are any dead DNS records
-
+	var arecord string
 	cmd := exec.Command("dig", "CNAME", domain, "+short")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -300,7 +327,6 @@ func scansingleDomain(domain string, cmsRecords []*CMS) (bool, bool, error) {
 
 	//Grabbing the output from the DIG command and storing it in the cname variable
 	cname := out.String()
-
 	var isVulnerable bool
 	var isTakenOver bool
 
@@ -317,6 +343,14 @@ func scansingleDomain(domain string, cmsRecords []*CMS) (bool, bool, error) {
 	client := &http.Client{
 		Transport: tr,
 		Timeout:   timeout,
+	}
+
+	if cname == "" {
+		cmd := exec.Command("dig", "A", domain, "+short")
+		cmd.Stdout = &out
+		err := cmd.Run()
+		Checkiferr(err)
+		arecord = strings.TrimSpace(out.String())
 	}
 
 	//Now, for each entry in the data providers file, we will check to see if the output
@@ -374,9 +408,21 @@ func scansingleDomain(domain string, cmsRecords []*CMS) (bool, bool, error) {
 						isTakenOver = true
 					}
 				}
-
 			}
+		}
 
+		if arecord != "" {
+			response, err := client.Get("http://" + arecord)
+			if err != nil {
+				fmt.Println(err)
+			}
+			text, err := ioutil.ReadAll(response.Body)
+			Checkiferr(err)
+			isVulnerable, err = regexp.MatchString(cmsRecord.String, string(text))
+			if isVulnerable {
+				fmt.Printf("Domain: %s, IP: %s, Provider: %s\n", domain, arecord, cmsRecord.Name)
+				return isVulnerable, false, nil
+			}
 		}
 	}
 	return isVulnerable, isTakenOver, nil
