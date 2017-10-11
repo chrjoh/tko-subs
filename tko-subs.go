@@ -299,9 +299,17 @@ func scanforeachDomain(domain string, cmsRecords []*CMS, wg *sync.WaitGroup) {
 				isVulnerable, err = regexp.MatchString(cmsRecord.String, string(text))
 				if isVulnerable {
 					fmt.Printf("Domain: %s, IP: %s, Provider: %s\n", domain, arecord, cmsRecord.Name)
-					tkr.Domain = domain
-					tkr.IsTakenOver = false
 					tkr.IsVulnerable = true
+
+					switch *takeOver { //we know its vulnerable now. depending upon the flag to take over or not, we go forward
+					case true:
+						takenOver, err := takeoversub(domain, cmsRecord.Name)
+						Checkiferr(err)
+						if takenOver { //if successfully taken over
+							tkr.IsTakenOver = true
+						}
+					}
+					tkr.Domain = domain
 					tkr.Provider = cmsRecord.Name
 					tkr.RespString = cmsRecord.String
 					tkoRes = append(tkoRes, tkr)
@@ -419,10 +427,20 @@ func scansingleDomain(domain string, cmsRecords []*CMS) (bool, bool, error) {
 			text, err := ioutil.ReadAll(response.Body)
 			Checkiferr(err)
 			isVulnerable, err = regexp.MatchString(cmsRecord.String, string(text))
+
 			if isVulnerable {
+				switch *takeOver { //we know its vulnerable now. depending upon the flag to take over or not, we go forward
+				case true:
+					takenOver, err := takeoversub(domain, cmsRecord.Name)
+					Checkiferr(err)
+					if takenOver { //if successfully taken over
+						isTakenOver = true
+					}
+				}
 				fmt.Printf("Domain: %s, IP: %s, Provider: %s\n", domain, arecord, cmsRecord.Name)
-				return isVulnerable, false, nil
+				return isVulnerable, isTakenOver, nil
 			}
+
 		}
 	}
 	return isVulnerable, isTakenOver, nil
